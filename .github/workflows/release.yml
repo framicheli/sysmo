@@ -1,0 +1,25 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+      - name: Build
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          tar -czf sysmo-${GITHUB_REF_NAME}-aarch64-apple-darwin.tar.gz -C target/aarch64-apple-darwin/release sysmo
+          tar -czf sysmo-${GITHUB_REF_NAME}-x86_64-apple-darwin.tar.gz -C target/x86_64-apple-darwin/release sysmo
+      - name: Create release
+        run: gh release create "$GITHUB_REF_NAME" sysmo-*.tar.gz --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
