@@ -14,6 +14,21 @@ use crate::metrics::{Collector, Update};
 const TICK_RATE: Duration = Duration::from_secs(1);
 
 fn main() -> std::io::Result<()> {
+    match std::env::args().nth(1).as_deref() {
+        Some("--version" | "-V") => {
+            println!("sysmo {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Some("--help" | "-h") => {
+            println!(
+                "sysmo {}\nA terminal system monitor and software inventory for macOS.\n\nUsage: sysmo [--version] [--help]",
+                env!("CARGO_PKG_VERSION")
+            );
+            return Ok(());
+        }
+        _ => {}
+    }
+
     let collector = Collector::spawn();
     // ratatui::init installs the terminal-restoring panic hook and enters
     // raw mode + alternate screen; restore runs on every exit path of run().
