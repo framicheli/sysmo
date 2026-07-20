@@ -24,6 +24,13 @@ special entitlements are required.
 ## Install
 
 ```sh
+brew tap framicheli/sysmo
+brew install sysmo
+```
+
+Or build from source:
+
+```sh
 cargo install --path .
 ```
 
