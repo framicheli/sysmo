@@ -28,6 +28,9 @@ brew tap framicheli/sysmo
 brew install sysmo
 ```
 
+If Homebrew refuses to load the formula as an untrusted third-party tap, run
+`brew trust framicheli/sysmo` first, then retry `brew install sysmo`.
+
 Or build from source:
 
 ```sh
