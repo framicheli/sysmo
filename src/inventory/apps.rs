@@ -44,7 +44,9 @@ fn app_item(path: &Path) -> InventoryItem {
             .map(str::to_string)
     };
     InventoryItem {
-        name: get("CFBundleName").filter(|n| !n.is_empty()).unwrap_or(stem),
+        name: get("CFBundleName")
+            .filter(|n| !n.is_empty())
+            .unwrap_or(stem),
         version: get("CFBundleShortVersionString").or_else(|| get("CFBundleVersion")),
         source: Source::App,
         path: Some(path.to_path_buf()),

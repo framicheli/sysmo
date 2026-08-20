@@ -57,7 +57,7 @@ impl BatteryWatch {
     }
 }
 
-/// `AppleSmartBattery` holds charge, cycles and health in one IORegistry
+/// `AppleSmartBattery` holds charge, cycles and health in one `IORegistry`
 /// entry; `-a` prints it as a plist, which is already a dependency here.
 fn read() -> Option<Battery> {
     let out = Command::new("ioreg")
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn healthy_laptop_battery() {
         let b = derive(&entry(laptop())).unwrap();
-        assert_eq!(b.charge_pct, 50.0);
+        assert!((b.charge_pct - 50.0).abs() < f32::EPSILON);
         assert_eq!(b.state, "on battery");
         assert!(b.good);
         assert_eq!(b.health_label(), "health Good 88% · 940/1000 cycles");
@@ -163,7 +163,7 @@ mod tests {
             ("ExternalConnected", true.into()),
         ]))
         .unwrap();
-        assert_eq!(b.charge_pct, 60.0);
+        assert!((b.charge_pct - 60.0).abs() < f32::EPSILON);
         assert_eq!(b.state, "charging");
         assert!(b.good); // no capacity data: nothing says it is failing
         assert_eq!(b.health_label(), "health Good · 0 cycles");

@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 use sysinfo::{MINIMUM_CPU_UPDATE_INTERVAL, Pid, ProcessesToUpdate, System};
 
 use super::{
-    Battery, Command, DiskHealth, Metrics, ProcessInfo, Update, battery, disk, ffi::FfiSample,
+    Battery, Command, DiskHealth, Metrics, NetworkStatus, ProcessInfo, Update, battery, disk,
+    ffi::FfiSample, network,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
@@ -18,6 +19,7 @@ pub fn run(
     let mut disks = disk::watch();
     let health = disk::health();
     let mut battery = battery::BatteryWatch::new();
+    let mut networks = network::NetworkWatch::new();
     // Show memory and processes immediately; CPU percentages settle after the
     // short baseline interval below.
     sys.refresh_cpu_usage();
@@ -51,6 +53,7 @@ pub fn run(
             disk::root_usage(&mut disks),
             health.clone(),
             battery.poll(),
+            networks.poll(),
         );
         if let Some(sample) = ffi_samples.try_iter().last() {
             sample.merge_into(&mut metrics);
@@ -72,6 +75,7 @@ fn collect(
     (disk_total, disk_available): (u64, u64),
     disk_health: Option<DiskHealth>,
     battery: Option<Battery>,
+    network: NetworkStatus,
 ) -> Metrics {
     let load = System::load_average();
     Metrics {
@@ -86,6 +90,7 @@ fn collect(
         disk_available,
         disk_health,
         battery,
+        network,
         processes: sys
             .processes()
             .iter()

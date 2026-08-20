@@ -8,4 +8,7 @@ core-foundation = "0.10"
 crossterm = "0.29.0"
 plist = "1"
 ratatui = "0.30.2"
-sysinfo = { version = "0.39.6", default-features = false, features = ["system", "disk"] }
+sysinfo = { version = "0.39.6", default-features = false, features = ["system", "disk", "network"] }
+
+[lints.clippy]
+pedantic = "warn"

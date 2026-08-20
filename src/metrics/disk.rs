@@ -91,10 +91,7 @@ mod tests {
     use super::*;
 
     fn dict(pairs: Vec<(&str, plist::Value)>) -> plist::Dictionary {
-        pairs
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect()
+        pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
     }
 
     #[test]

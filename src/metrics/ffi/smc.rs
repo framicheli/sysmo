@@ -248,10 +248,10 @@ impl Smc {
             IOConnectCallStructMethod(
                 self.connection.0,
                 2,
-                (input as *const KeyData).cast(),
+                std::ptr::from_ref::<KeyData>(input).cast(),
                 size_of::<KeyData>(),
-                (&mut output as *mut KeyData).cast(),
-                &mut output_size,
+                (&raw mut output).cast(),
+                &raw mut output_size,
             )
         };
         if status != 0 {
@@ -276,7 +276,7 @@ fn open_connection() -> Result<Connection> {
     }
     let mut iterator = 0;
     // SAFETY: matching is transferred to IOKit and iterator points to writable storage.
-    let status = unsafe { IOServiceGetMatchingServices(0, matching, &mut iterator) };
+    let status = unsafe { IOServiceGetMatchingServices(0, matching, &raw mut iterator) };
     if status != 0 || iterator == 0 {
         return Err(format!("AppleSMC lookup failed: {status}"));
     }
@@ -299,7 +299,7 @@ fn open_connection() -> Result<Connection> {
         }
         let mut connection = 0;
         // SAFETY: service is live, connection is writable, and mach_task_self is a borrowed port.
-        let status = unsafe { IOServiceOpen(service.0, mach_task_self(), 0, &mut connection) };
+        let status = unsafe { IOServiceOpen(service.0, mach_task_self(), 0, &raw mut connection) };
         if status == 0 && connection != 0 {
             return Ok(Connection(connection));
         }
@@ -322,10 +322,10 @@ fn decode_numeric(bytes: &[u8], kind: &str) -> Option<f32> {
     match kind {
         "flt " if bytes.len() == 4 => Some(f32::from_le_bytes(bytes.try_into().ok()?)),
         "fpe2" if bytes.len() >= 2 => {
-            Some(u16::from_be_bytes(bytes[..2].try_into().ok()?) as f32 / 4.0)
+            Some(f32::from(u16::from_be_bytes(bytes[..2].try_into().ok()?)) / 4.0)
         }
         "sp78" if bytes.len() >= 2 => {
-            Some(i16::from_be_bytes(bytes[..2].try_into().ok()?) as f32 / 256.0)
+            Some(f32::from(i16::from_be_bytes(bytes[..2].try_into().ok()?)) / 256.0)
         }
         _ => None,
     }
