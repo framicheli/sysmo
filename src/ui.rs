@@ -16,6 +16,7 @@ const MEMORY: Color = Color::Rgb(158, 206, 106);
 const GPU: Color = Color::Rgb(187, 154, 247);
 const THERMAL: Color = Color::Rgb(247, 118, 142);
 const DISK: Color = Color::Rgb(224, 175, 104);
+const LOW_BATTERY_PCT: f32 = 20.0;
 const ACCENT: Color = Color::Rgb(115, 218, 202);
 const MUTED: Color = Color::Rgb(86, 95, 137);
 
@@ -77,6 +78,7 @@ fn render_monitor(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
+    let battery_row = usize::from(m.battery.is_some());
     let cores = m.per_core_cpu.len();
     let columns = cores.div_ceil(MAX_CORE_ROWS).max(1);
     let rows = cores.div_ceil(columns);
@@ -93,7 +95,7 @@ fn render_monitor(frame: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(rows as u16),
-        Constraint::Length(4),
+        Constraint::Length(4 + battery_row as u16),
         Constraint::Length(3),
         Constraint::Length(4),
         Constraint::Fill(1),
@@ -136,11 +138,16 @@ fn render_monitor(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    let [ram_area, swap_area, disk_area, health_area] =
-        Layout::vertical([Constraint::Length(1); 4]).areas(mem_area);
-    mem_gauge(frame, ram_area, "RAM ", m.mem_used, m.mem_total, MEMORY);
-    mem_gauge(frame, swap_area, "Swap", m.swap_used, m.swap_total, GPU);
-    render_disk(frame, disk_area, health_area, m);
+    // split() always yields one rect per constraint, so a short terminal
+    // squeezes these rows to zero height instead of dropping them.
+    let rows = Layout::vertical(vec![Constraint::Length(1); 4 + battery_row])
+        .split(mem_area);
+    mem_gauge(frame, rows[0], "RAM ", m.mem_used, m.mem_total, MEMORY);
+    mem_gauge(frame, rows[1], "Swap", m.swap_used, m.swap_total, GPU);
+    render_disk(frame, rows[2], rows[3], m);
+    if let Some(battery) = &m.battery {
+        render_battery(frame, rows[4], battery);
+    }
 
     render_power(frame, power_area, m);
     render_sensors(
@@ -207,6 +214,26 @@ fn render_disk(frame: &mut Frame, gauge_area: Rect, health_area: Rect, m: &crate
         None => ("SMART —", MUTED),
     };
     frame.render_widget(Paragraph::new(health).fg(color), health_area);
+}
+
+fn render_battery(frame: &mut Frame, area: Rect, battery: &crate::metrics::Battery) {
+    let color = if battery.good && battery.charge_pct >= LOW_BATTERY_PCT {
+        MEMORY
+    } else {
+        THERMAL
+    };
+    frame.render_widget(
+        Gauge::default()
+            .label(format!(
+                "Batt {:.0}% · {} · {}",
+                battery.charge_pct,
+                battery.state,
+                battery.health_label()
+            ))
+            .gauge_style(Style::new().fg(color))
+            .ratio(gauge_ratio(battery.charge_pct)),
+        area,
+    );
 }
 
 fn render_sensors(

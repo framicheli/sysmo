@@ -1,3 +1,4 @@
+mod battery;
 mod disk;
 mod ffi;
 mod sysinfo_collector;
@@ -6,6 +7,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
+pub use battery::Battery;
 pub use disk::DiskHealth;
 
 #[derive(Clone, Debug)]
@@ -28,6 +30,7 @@ pub struct Metrics {
     pub disk_total: u64,
     pub disk_available: u64,
     pub disk_health: Option<DiskHealth>,
+    pub battery: Option<Battery>,
     pub processes: Vec<ProcessInfo>,
     pub timestamp: Instant,
     pub cpu_power_w: Option<f32>,
