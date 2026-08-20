@@ -15,6 +15,7 @@ const CPU: Color = Color::Rgb(122, 162, 247);
 const MEMORY: Color = Color::Rgb(158, 206, 106);
 const GPU: Color = Color::Rgb(187, 154, 247);
 const THERMAL: Color = Color::Rgb(247, 118, 142);
+const DISK: Color = Color::Rgb(224, 175, 104);
 const ACCENT: Color = Color::Rgb(115, 218, 202);
 const MUTED: Color = Color::Rgb(86, 95, 137);
 
@@ -92,7 +93,7 @@ fn render_monitor(frame: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(rows as u16),
-        Constraint::Length(2),
+        Constraint::Length(4),
         Constraint::Length(3),
         Constraint::Length(4),
         Constraint::Fill(1),
@@ -135,10 +136,11 @@ fn render_monitor(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    let [ram_area, swap_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(mem_area);
+    let [ram_area, swap_area, disk_area, health_area] =
+        Layout::vertical([Constraint::Length(1); 4]).areas(mem_area);
     mem_gauge(frame, ram_area, "RAM ", m.mem_used, m.mem_total, MEMORY);
     mem_gauge(frame, swap_area, "Swap", m.swap_used, m.swap_total, GPU);
+    render_disk(frame, disk_area, health_area, m);
 
     render_power(frame, power_area, m);
     render_sensors(
@@ -175,6 +177,36 @@ fn render_monitor(frame: &mut Frame, area: Rect, app: &App) {
     let mut state = TableState::default()
         .with_selected(app.selected.min(procs.len().saturating_sub(1)));
     frame.render_stateful_widget(table, table_area, &mut state);
+}
+
+/// Boot volume only: usage of every mount is an inventory, not a monitor.
+fn render_disk(frame: &mut Frame, gauge_area: Rect, health_area: Rect, m: &crate::metrics::Metrics) {
+    let used = m.disk_total.saturating_sub(m.disk_available);
+    let pct = |bytes: u64| {
+        if m.disk_total == 0 {
+            0.0
+        } else {
+            100.0 * bytes as f32 / m.disk_total as f32
+        }
+    };
+    frame.render_widget(
+        Gauge::default()
+            .label(format!(
+                "Disk {:.1}/{:.1} GiB · {:.0}% used · {:.0}% free",
+                used as f64 / GIB,
+                m.disk_total as f64 / GIB,
+                pct(used),
+                pct(m.disk_available),
+            ))
+            .gauge_style(Style::new().fg(DISK))
+            .ratio(gauge_ratio(pct(used))),
+        gauge_area,
+    );
+    let (health, color) = match &m.disk_health {
+        Some(h) => (h.summary.as_str(), if h.ok { MEMORY } else { THERMAL }),
+        None => ("SMART —", MUTED),
+    };
+    frame.render_widget(Paragraph::new(health).fg(color), health_area);
 }
 
 fn render_sensors(

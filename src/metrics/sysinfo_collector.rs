@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use sysinfo::{MINIMUM_CPU_UPDATE_INTERVAL, Pid, ProcessesToUpdate, System};
 
-use super::{Command, Metrics, ProcessInfo, Update, ffi::FfiSample};
+use super::{Command, DiskHealth, Metrics, ProcessInfo, Update, disk, ffi::FfiSample};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -13,6 +13,8 @@ pub fn run(
     ffi_samples: &Receiver<FfiSample>,
 ) {
     let mut sys = System::new();
+    let mut disks = disk::watch();
+    let health = disk::health();
     // Show memory and processes immediately; CPU percentages settle after the
     // short baseline interval below.
     sys.refresh_cpu_usage();
@@ -41,7 +43,7 @@ pub fn run(
         sys.refresh_cpu_usage();
         sys.refresh_memory();
         sys.refresh_processes(ProcessesToUpdate::All, true);
-        let mut metrics = collect(&sys);
+        let mut metrics = collect(&sys, disk::root_usage(&mut disks), health.clone());
         if let Some(sample) = ffi_samples.try_iter().last() {
             sample.merge_into(&mut metrics);
         }
@@ -57,7 +59,11 @@ pub fn run(
     }
 }
 
-fn collect(sys: &System) -> Metrics {
+fn collect(
+    sys: &System,
+    (disk_total, disk_available): (u64, u64),
+    disk_health: Option<DiskHealth>,
+) -> Metrics {
     let load = System::load_average();
     Metrics {
         per_core_cpu: sys.cpus().iter().map(sysinfo::Cpu::cpu_usage).collect(),
@@ -67,6 +73,9 @@ fn collect(sys: &System) -> Metrics {
         swap_total: sys.total_swap(),
         swap_used: sys.used_swap(),
         load_avg: (load.one, load.five, load.fifteen),
+        disk_total,
+        disk_available,
+        disk_health,
         processes: sys
             .processes()
             .iter()

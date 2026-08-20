@@ -1,9 +1,12 @@
+mod disk;
 mod ffi;
 mod sysinfo_collector;
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::Instant;
+
+pub use disk::DiskHealth;
 
 #[derive(Clone, Debug)]
 pub struct ProcessInfo {
@@ -22,6 +25,9 @@ pub struct Metrics {
     pub swap_total: u64,
     pub swap_used: u64,
     pub load_avg: (f64, f64, f64),
+    pub disk_total: u64,
+    pub disk_available: u64,
+    pub disk_health: Option<DiskHealth>,
     pub processes: Vec<ProcessInfo>,
     pub timestamp: Instant,
     pub cpu_power_w: Option<f32>,

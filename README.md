@@ -4,9 +4,10 @@ A terminal system monitor and software inventory for macOS, written in Rust.
 
 Sysmo is a two-tab TUI built on [ratatui](https://ratatui.rs):
 
-- **Monitor** — live CPU, memory, swap, load, and process data, plus
+- **Monitor** — live CPU, memory, swap, disk, load, and process data, plus
   Apple-silicon hardware telemetry: CPU/GPU/ANE power draw, E-cluster and
   P-cluster frequencies, GPU utilization, temperatures, and fan speeds.
+  Disk shows used/free space on the boot volume and its SMART health.
 - **Inventory** — a scan of installed software: `.app` bundles, Homebrew
   formulae and casks, common command-line tools, and language toolchains,
   each with a detected version where available.
