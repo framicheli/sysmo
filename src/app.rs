@@ -30,6 +30,9 @@ pub enum SortColumn {
     Mem,
 }
 
+/// One flag per toggle the keymap exposes; grouping them into sub-structs
+/// would only add a path to type in front of each one.
+#[allow(clippy::struct_excessive_bools)]
 pub struct App {
     pub active_tab: Tab,
     pub should_quit: bool,
@@ -238,11 +241,7 @@ impl App {
     }
 }
 
-pub fn inventory_matches(
-    item: &InventoryItem,
-    source: Option<Source>,
-    needle_lower: &str,
-) -> bool {
+pub fn inventory_matches(item: &InventoryItem, source: Option<Source>, needle_lower: &str) -> bool {
     source.is_none_or(|s| item.source == s)
         && (needle_lower.is_empty() || item.name.to_lowercase().contains(needle_lower))
 }
@@ -340,7 +339,11 @@ mod tests {
         let ripgrep = item("ripgrep", Source::Brew);
         // case-insensitive name match
         assert!(inventory_matches(&firefox, None, "fire"));
-        assert!(inventory_matches(&firefox, None, "FOX".to_lowercase().as_str()));
+        assert!(inventory_matches(
+            &firefox,
+            None,
+            "FOX".to_lowercase().as_str()
+        ));
         assert!(!inventory_matches(&firefox, None, "chrome"));
         // empty needle matches everything
         assert!(inventory_matches(&ripgrep, None, ""));

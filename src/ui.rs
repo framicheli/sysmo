@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -15,6 +17,9 @@ const CPU: Color = Color::Rgb(122, 162, 247);
 const MEMORY: Color = Color::Rgb(158, 206, 106);
 const GPU: Color = Color::Rgb(187, 154, 247);
 const THERMAL: Color = Color::Rgb(247, 118, 142);
+const DISK: Color = Color::Rgb(224, 175, 104);
+const NET: Color = Color::Rgb(125, 207, 255);
+const LOW_BATTERY_PCT: f32 = 20.0;
 const ACCENT: Color = Color::Rgb(115, 218, 202);
 const MUTED: Color = Color::Rgb(86, 95, 137);
 
@@ -76,6 +81,7 @@ fn render_monitor(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
+    let battery_row = usize::from(m.battery.is_some());
     let cores = m.per_core_cpu.len();
     let columns = cores.div_ceil(MAX_CORE_ROWS).max(1);
     let rows = cores.div_ceil(columns);
@@ -92,7 +98,7 @@ fn render_monitor(frame: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(rows as u16),
-        Constraint::Length(2),
+        Constraint::Length(6 + battery_row as u16),
         Constraint::Length(3),
         Constraint::Length(4),
         Constraint::Fill(1),
@@ -122,8 +128,7 @@ fn render_monitor(frame: &mut Frame, area: Rect, app: &App) {
 
     let col_areas = Layout::horizontal(vec![Constraint::Fill(1); columns]).split(cpu_area);
     for (col, chunk) in m.per_core_cpu.chunks(rows).enumerate() {
-        let row_areas =
-            Layout::vertical(vec![Constraint::Length(1); rows]).split(col_areas[col]);
+        let row_areas = Layout::vertical(vec![Constraint::Length(1); rows]).split(col_areas[col]);
         for (row, &pct) in chunk.iter().enumerate() {
             frame.render_widget(
                 Gauge::default()
@@ -135,10 +140,21 @@ fn render_monitor(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    let [ram_area, swap_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(mem_area);
-    mem_gauge(frame, ram_area, "RAM ", m.mem_used, m.mem_total, MEMORY);
-    mem_gauge(frame, swap_area, "Swap", m.swap_used, m.swap_total, GPU);
+    // split() always yields one rect per constraint, so a short terminal
+    // squeezes these rows to zero height instead of dropping them.
+    let rows = Layout::vertical(vec![Constraint::Length(1); 6 + battery_row]).split(mem_area);
+    mem_gauge(frame, rows[0], "RAM ", m.mem_used, m.mem_total, MEMORY);
+    mem_gauge(frame, rows[1], "Swap", m.swap_used, m.swap_total, GPU);
+    render_disk(frame, rows[2], rows[3], m);
+    if let Some(battery) = &m.battery {
+        render_battery(frame, rows[4], battery);
+    }
+    render_network(
+        frame,
+        rows[4 + battery_row],
+        rows[5 + battery_row],
+        &m.network,
+    );
 
     render_power(frame, power_area, m);
     render_sensors(
@@ -148,6 +164,10 @@ fn render_monitor(frame: &mut Frame, area: Rect, app: &App) {
         m.fans.as_deref().unwrap_or_default(),
     );
 
+    render_processes(frame, table_area, app);
+}
+
+fn render_processes(frame: &mut Frame, area: Rect, app: &App) {
     let procs = app.sorted_processes();
     let table = Table::new(
         procs.iter().map(|p| {
@@ -172,9 +192,89 @@ fn render_monitor(frame: &mut Frame, area: Rect, app: &App) {
             .underlined(),
     )
     .row_highlight_style(Style::new().fg(Color::Black).bg(CPU).bold());
-    let mut state = TableState::default()
-        .with_selected(app.selected.min(procs.len().saturating_sub(1)));
-    frame.render_stateful_widget(table, table_area, &mut state);
+    let mut state =
+        TableState::default().with_selected(app.selected.min(procs.len().saturating_sub(1)));
+    frame.render_stateful_widget(table, area, &mut state);
+}
+
+/// Boot volume only: usage of every mount is an inventory, not a monitor.
+fn render_disk(
+    frame: &mut Frame,
+    gauge_area: Rect,
+    health_area: Rect,
+    m: &crate::metrics::Metrics,
+) {
+    let used = m.disk_total.saturating_sub(m.disk_available);
+    let pct = |bytes: u64| {
+        if m.disk_total == 0 {
+            0.0
+        } else {
+            100.0 * bytes as f32 / m.disk_total as f32
+        }
+    };
+    frame.render_widget(
+        Gauge::default()
+            .label(format!(
+                "Disk {:.1}/{:.1} GiB · {:.0}% used · {:.0}% free",
+                used as f64 / GIB,
+                m.disk_total as f64 / GIB,
+                pct(used),
+                pct(m.disk_available),
+            ))
+            .gauge_style(Style::new().fg(DISK))
+            .ratio(gauge_ratio(pct(used))),
+        gauge_area,
+    );
+    let (health, color) = match &m.disk_health {
+        Some(h) => (h.summary.as_str(), if h.ok { MEMORY } else { THERMAL }),
+        None => ("SMART —", MUTED),
+    };
+    frame.render_widget(Paragraph::new(health).fg(color), health_area);
+}
+
+fn render_network(
+    frame: &mut Frame,
+    rate_area: Rect,
+    interface_area: Rect,
+    net: &crate::metrics::NetworkStatus,
+) {
+    frame.render_widget(
+        Paragraph::new(format!(
+            "Net ↓ {}/s ↑ {}/s · total ↓ {} ↑ {}",
+            format_bytes(net.rx_per_sec),
+            format_bytes(net.tx_per_sec),
+            format_bytes(net.total_rx),
+            format_bytes(net.total_tx),
+        ))
+        .fg(NET),
+        rate_area,
+    );
+    let (interfaces, color) = if net.interfaces.is_empty() {
+        ("offline".to_string(), THERMAL)
+    } else {
+        (net.interfaces.join(" · "), MUTED)
+    };
+    frame.render_widget(Paragraph::new(interfaces).fg(color), interface_area);
+}
+
+fn render_battery(frame: &mut Frame, area: Rect, battery: &crate::metrics::Battery) {
+    let color = if battery.good && battery.charge_pct >= LOW_BATTERY_PCT {
+        MEMORY
+    } else {
+        THERMAL
+    };
+    frame.render_widget(
+        Gauge::default()
+            .label(format!(
+                "Batt {:.0}% · {} · {}",
+                battery.charge_pct,
+                battery.state,
+                battery.health_label()
+            ))
+            .gauge_style(Style::new().fg(color))
+            .ratio(gauge_ratio(battery.charge_pct)),
+        area,
+    );
 }
 
 fn render_sensors(
@@ -296,23 +396,25 @@ fn render_inventory(frame: &mut Frame, area: Rect, app: &App) {
         status.push(SPIN[app.tick as usize % SPIN.len()]);
         status.push_str(" scanning…  ");
     }
-    status.push_str(&format!(
+    let _ = write!(
+        status,
         "Apps {} · Brew {} · Casks {} · Tools {} · Languages {}",
         count(Source::App),
         count(Source::Brew),
         count(Source::Cask),
         count(Source::Tool),
         count(Source::Language),
-    ));
+    );
     if let Some(src) = app.inv_source_filter {
-        status.push_str(&format!("  [source: {}]", src.label()));
+        let _ = write!(status, "  [source: {}]", src.label());
     }
     if app.inv_filter_mode || !app.inv_filter.is_empty() {
-        status.push_str(&format!(
+        let _ = write!(
+            status,
             "  /{}{}",
             app.inv_filter,
             if app.inv_filter_mode { "▏" } else { "" }
-        ));
+        );
     }
     frame.render_widget(Paragraph::new(status).fg(ACCENT).bold(), status_area);
 
@@ -365,7 +467,11 @@ fn truncate_left(s: &str, max: usize) -> String {
 /// processes and can produce NaN early on.
 fn gauge_ratio(pct: f32) -> f64 {
     let ratio = f64::from(pct) / 100.0;
-    if ratio.is_finite() { ratio.clamp(0.0, 1.0) } else { 0.0 }
+    if ratio.is_finite() {
+        ratio.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -386,6 +492,91 @@ fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics::{Battery, DiskHealth, Metrics, NetworkStatus};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn metrics(battery: Option<Battery>) -> Metrics {
+        Metrics {
+            per_core_cpu: vec![12.0; 10],
+            global_cpu: 21.0,
+            mem_total: 64 << 30,
+            mem_used: 30 << 30,
+            swap_total: 0,
+            swap_used: 0,
+            load_avg: (1.0, 2.0, 3.0),
+            disk_total: 994_662_584_320,
+            disk_available: 271_805_285_295,
+            disk_health: Some(DiskHealth {
+                summary: "SMART Verified · 8% wear".into(),
+                ok: true,
+            }),
+            battery,
+            network: NetworkStatus {
+                rx_per_sec: 5600,
+                tx_per_sec: 95_741,
+                total_rx: 18_382_796_193,
+                total_tx: 17_704_049_501,
+                interfaces: vec!["en0 192.168.10.40".into()],
+            },
+            processes: Vec::new(),
+            timestamp: std::time::Instant::now(),
+            cpu_power_w: Some(3.5),
+            gpu_power_w: None,
+            ane_power_w: None,
+            ecluster_freq_mhz: None,
+            pcluster_freq_mhz: None,
+            gpu_util_pct: None,
+            temps: None,
+            fans: None,
+        }
+    }
+
+    fn rendered(app: &App, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| render(frame, app)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(width as usize)
+            .map(|row| {
+                row.iter()
+                    .map(ratatui::buffer::Cell::symbol)
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The disk/battery/network rows are laid out by index, and the battery row
+    /// only exists on laptops: render both shapes, and a terminal too short to
+    /// hold them, so a bad index panics here instead of on someone's desktop.
+    #[test]
+    fn monitor_renders_at_any_size() {
+        let battery = Battery {
+            charge_pct: 48.0,
+            state: "on battery",
+            cycles: 941,
+            design_cycles: Some(1000),
+            health_pct: Some(88.0),
+            good: true,
+        };
+        let mut app = App::default();
+        app.metrics = Some(metrics(Some(battery)));
+        let frame = rendered(&app, 100, 40);
+        assert!(frame.contains("Batt 48% · on battery · health Good 88% · 941/1000 cycles"));
+        assert!(frame.contains("· 73% used · 27% free"));
+        assert!(frame.contains("Net ↓ 5.5 KiB/s ↑ 93.5 KiB/s"));
+        assert!(frame.contains("en0 192.168.10.40"));
+
+        app.metrics = Some(metrics(None));
+        let frame = rendered(&app, 100, 40);
+        assert!(!frame.contains("Batt"));
+        assert!(frame.contains("Net ↓"));
+
+        rendered(&app, 40, 8);
+    }
 
     #[test]
     fn gauge_ratio_is_always_valid() {
@@ -409,6 +600,9 @@ mod tests {
         assert_eq!(format_bytes(1024), "1.0 KiB");
         assert_eq!(format_bytes(5 * 1024 * 1024 + 512 * 1024), "5.5 MiB");
         assert_eq!(format_bytes(3 * 1024 * 1024 * 1024), "3.0 GiB");
-        assert_eq!(format_bytes(u64::MAX), format!("{:.1} GiB", u64::MAX as f64 / GIB));
+        assert_eq!(
+            format_bytes(u64::MAX),
+            format!("{:.1} GiB", u64::MAX as f64 / GIB)
+        );
     }
 }

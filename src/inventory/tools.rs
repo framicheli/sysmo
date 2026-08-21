@@ -135,10 +135,7 @@ mod tests {
             extract_version("openjdk version \"21.0.2\" 2024-01-16"),
             Some("21.0.2".to_string())
         );
-        assert_eq!(
-            extract_version("Python 3.12.4"),
-            Some("3.12.4".to_string())
-        );
+        assert_eq!(extract_version("Python 3.12.4"), Some("3.12.4".to_string()));
         assert_eq!(extract_version("v20.11.1"), Some("20.11.1".to_string()));
         assert_eq!(
             extract_version("go version go1.22.4 darwin/arm64"),

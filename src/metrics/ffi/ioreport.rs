@@ -160,31 +160,28 @@ impl IoReport {
         let channels = OwnedCf::new(channels.cast(), "channel dictionary copy")?;
         let (e_freqs, p_freqs) = cpu_frequency_tables()?;
 
-        match SampleSource::new(channels) {
-            Ok(source) => Ok(Self {
+        // The combined channel set is the fast path; chips that reject it get
+        // energy and CPU stats as two separate subscriptions.
+        if let Ok(source) = SampleSource::new(channels) {
+            return Ok(Self {
                 source,
                 cpu_source: None,
                 e_freqs,
                 p_freqs,
-            }),
-            Err(_) => {
-                // SAFETY: the string is live and reserved arguments are zero/null.
-                let energy = unsafe {
-                    IOReportCopyChannelsInGroup(energy_group.0.cast(), ptr::null(), 0, 0, 0)
-                };
-                let energy = OwnedCf::new(energy.cast(), "Energy Model channels")?;
-                let energy = mutable_copy(energy.borrowed())?;
-                let cpu = mutable_copy(cpu.borrowed())?;
-                let source = SampleSource::new(energy)?;
-                let cpu_source = SampleSource::new(cpu).ok();
-                Ok(Self {
-                    source,
-                    cpu_source,
-                    e_freqs,
-                    p_freqs,
-                })
-            }
+            });
         }
+        // SAFETY: the string is live and reserved arguments are zero/null.
+        let energy =
+            unsafe { IOReportCopyChannelsInGroup(energy_group.0.cast(), ptr::null(), 0, 0, 0) };
+        let energy = OwnedCf::new(energy.cast(), "Energy Model channels")?;
+        let energy = mutable_copy(energy.borrowed())?;
+        let cpu = mutable_copy(cpu.borrowed())?;
+        Ok(Self {
+            source: SampleSource::new(energy)?,
+            cpu_source: SampleSource::new(cpu).ok(),
+            e_freqs,
+            p_freqs,
+        })
     }
 
     pub fn poll(&mut self, output: &mut FfiSample) {
@@ -257,7 +254,7 @@ fn create_subscription(channels: OwnedCf) -> Result<(OwnedCf, OwnedCf)> {
         IOReportCreateSubscription(
             ptr::null(),
             channels.0.cast_mut().cast(),
-            &mut subscribed,
+            &raw mut subscribed,
             0,
             ptr::null(),
         )
@@ -293,12 +290,14 @@ fn read_delta(
     };
     // SAFETY: IOReportChannels is an array owned by the live delta dictionary.
     let count = unsafe { CFArrayGetCount(channels.0.cast()) };
-    let mut cpu_power = 0.0;
-    let mut gpu_power = 0.0;
-    let mut ane_power = 0.0;
-    let mut saw_cpu = false;
-    let mut saw_gpu = false;
-    let mut saw_ane = false;
+    // None until a matching channel shows up: a chip without an ANE must read
+    // as unavailable, not as a flat 0 W.
+    let mut cpu_power: Option<f32> = None;
+    let mut gpu_power: Option<f32> = None;
+    let mut ane_power: Option<f32> = None;
+    let accumulate = |slot: &mut Option<f32>, watts: f32| {
+        *slot = Some(slot.unwrap_or(0.0) + watts);
+    };
     let mut e_by_die: BTreeMap<usize, Vec<f32>> = BTreeMap::new();
     let mut p_by_die: BTreeMap<usize, Vec<f32>> = BTreeMap::new();
 
@@ -317,14 +316,11 @@ fn read_delta(
                 continue;
             };
             if name == "GPU Energy" {
-                gpu_power += watts;
-                saw_gpu = true;
+                accumulate(&mut gpu_power, watts);
             } else if name.ends_with("CPU Energy") {
-                cpu_power += watts;
-                saw_cpu = true;
+                accumulate(&mut cpu_power, watts);
             } else if name.starts_with("ANE") {
-                ane_power += watts;
-                saw_ane = true;
+                accumulate(&mut ane_power, watts);
             }
             continue;
         }
@@ -343,15 +339,9 @@ fn read_delta(
         }
     }
 
-    if saw_cpu {
-        output.cpu_power_w = Some(cpu_power);
-    }
-    if saw_gpu {
-        output.gpu_power_w = Some(gpu_power);
-    }
-    if saw_ane {
-        output.ane_power_w = Some(ane_power);
-    }
+    output.cpu_power_w = cpu_power.or(output.cpu_power_w);
+    output.gpu_power_w = gpu_power.or(output.gpu_power_w);
+    output.ane_power_w = ane_power.or(output.ane_power_w);
     if let Some(frequencies) = cluster_averages(e_by_die) {
         output.ecluster_freq_mhz = Some(frequencies);
     }
@@ -412,6 +402,7 @@ fn effective_frequency(channel: BorrowedCf, frequencies: &[f32]) -> Option<f32> 
     )
 }
 
+#[derive(Clone, Copy)]
 enum ChannelString {
     Group,
     Name,
@@ -436,7 +427,7 @@ fn cf_string(value: &str) -> Result<OwnedCf> {
         CFStringCreateWithBytes(
             kCFAllocatorDefault,
             value.as_ptr(),
-            value.len() as isize,
+            isize::try_from(value.len()).unwrap_or(isize::MAX),
             kCFStringEncodingUTF8,
             0,
         )
@@ -454,7 +445,7 @@ fn cf_string_value(value: CFStringRef) -> String {
         CFStringGetCString(
             value,
             buffer.as_mut_ptr(),
-            buffer.len() as isize,
+            isize::try_from(buffer.len()).unwrap_or(isize::MAX),
             kCFStringEncodingUTF8,
         )
     };
@@ -491,7 +482,7 @@ fn cpu_frequency_tables() -> Result<(Vec<f32>, Vec<f32>)> {
     }
     let mut iterator = 0;
     // SAFETY: matching is transferred to IOKit and iterator points to writable storage.
-    let status = unsafe { IOServiceGetMatchingServices(0, matching, &mut iterator) };
+    let status = unsafe { IOServiceGetMatchingServices(0, matching, &raw mut iterator) };
     if status != 0 || iterator == 0 {
         return Err(format!("AppleARMIODevice lookup failed: {status}"));
     }
@@ -516,7 +507,7 @@ fn cpu_frequency_tables() -> Result<(Vec<f32>, Vec<f32>)> {
         let mut properties: CFMutableDictionaryRef = ptr::null_mut();
         // SAFETY: entry is live, properties is writable, and the default allocator is valid.
         let status = unsafe {
-            IORegistryEntryCreateCFProperties(entry.0, &mut properties, kCFAllocatorDefault, 0)
+            IORegistryEntryCreateCFProperties(entry.0, &raw mut properties, kCFAllocatorDefault, 0)
         };
         if status != 0 {
             return Err(format!("pmgr properties failed: {status}"));
@@ -589,7 +580,7 @@ fn dictionary_data(dictionary: BorrowedCf, key: &str) -> Option<Vec<u8>> {
             data.0.cast::<c_void>().cast::<_>() as CFDataRef,
             CFRange::init(0, len),
             bytes.as_mut_ptr(),
-        )
+        );
     };
     Some(bytes)
 }

@@ -1,9 +1,16 @@
+mod battery;
+mod disk;
 mod ffi;
+mod network;
 mod sysinfo_collector;
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::Instant;
+
+pub use battery::Battery;
+pub use disk::DiskHealth;
+pub use network::NetworkStatus;
 
 #[derive(Clone, Debug)]
 pub struct ProcessInfo {
@@ -22,6 +29,11 @@ pub struct Metrics {
     pub swap_total: u64,
     pub swap_used: u64,
     pub load_avg: (f64, f64, f64),
+    pub disk_total: u64,
+    pub disk_available: u64,
+    pub disk_health: Option<DiskHealth>,
+    pub battery: Option<Battery>,
+    pub network: NetworkStatus,
     pub processes: Vec<ProcessInfo>,
     pub timestamp: Instant,
     pub cpu_power_w: Option<f32>,
@@ -58,8 +70,7 @@ impl Collector {
         // FFI init runs on its own thread, so starting it immediately costs
         // the first frame nothing and gets temps/GPU into the second tick.
         let ffi_handle = std::thread::spawn(move || ffi::run(&ffi_tx));
-        let handle =
-            std::thread::spawn(move || sysinfo_collector::run(&cmd_rx, &upd_tx, &ffi_rx));
+        let handle = std::thread::spawn(move || sysinfo_collector::run(&cmd_rx, &upd_tx, &ffi_rx));
         Collector {
             updates: upd_rx,
             commands: cmd_tx,
@@ -72,7 +83,7 @@ impl Collector {
         let _ = self.commands.send(Command::Kill(pid));
     }
 
-    /// Dropping the command sender wakes the collector's recv_timeout
+    /// Dropping the command sender wakes the collector's `recv_timeout`
     /// immediately, so the join returns within one refresh (~ms), not a tick.
     pub fn shutdown(self) {
         drop(self.commands);

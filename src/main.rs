@@ -1,3 +1,13 @@
+// Pedantic clippy is on (see Cargo.toml). These three fire on nearly every
+// conversion this program makes — byte counts and sensor readings turned into
+// floats for display, then back into terminal cells — where the lost bits are
+// far below one pixel of a gauge.
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+
 mod app;
 mod inventory;
 mod metrics;

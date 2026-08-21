@@ -71,7 +71,7 @@ mod smoke {
 
     /// Real-system smoke check: `cargo test -- --ignored --nocapture`.
     #[test]
-    #[ignore]
+    #[ignore = "scans the real filesystem; run explicitly"]
     fn full_scan_completes() {
         let rx = start_scan();
         let mut items = 0;

@@ -66,6 +66,9 @@ impl Gpu {
         query_utilization().map(|_| Self)
     }
 
+    /// `Gpu` is a capability token: holding one means the query worked once,
+    /// so `poll` needs no state of its own.
+    #[allow(clippy::unused_self)]
     pub fn poll(&self) -> Option<f32> {
         query_utilization().ok().flatten()
     }
@@ -80,7 +83,7 @@ fn query_utilization() -> Result<Option<f32>> {
     }
     let mut iterator = 0;
     // SAFETY: matching is transferred to IOKit and iterator points to writable storage.
-    let status = unsafe { IOServiceGetMatchingServices(0, matching, &mut iterator) };
+    let status = unsafe { IOServiceGetMatchingServices(0, matching, &raw mut iterator) };
     if status != 0 || iterator == 0 {
         return Err(format!("IOAccelerator lookup failed: {status}"));
     }
@@ -139,7 +142,7 @@ fn dictionary_number(dictionary: CFDictionaryRef, key: *const c_void) -> Option<
         CFNumberGetValue(
             value.cast::<c_void>().cast::<_>() as CFNumberRef,
             kCFNumberFloat64Type,
-            (&mut number as *mut f64).cast(),
+            (&raw mut number).cast(),
         )
     }
     .then_some(number as f32)
@@ -151,7 +154,7 @@ fn cf_string(value: &str) -> Result<OwnedCf> {
         CFStringCreateWithBytes(
             kCFAllocatorDefault,
             value.as_ptr(),
-            value.len() as isize,
+            isize::try_from(value.len()).unwrap_or(isize::MAX),
             kCFStringEncodingUTF8,
             0,
         )
